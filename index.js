@@ -4,60 +4,94 @@ var http = require('http')
 var os = require('os')
 var path = require('path')
 var rabbit = require('rabbit.js')
+var log = require('debug')('rabbitjs-test')
 
 // create the app
 var app = express()
 
 // configure everything, just basic setup
-app.configure(function(){
+app.configure(function () {
   app.set('port', process.env.PORT || 3000)
-  app.set('views', __dirname + '/views')
-  app.set('view engine', 'jade')
   app.use(express.favicon())
   app.use(express.logger('dev'))
   app.use(express.bodyParser())
   app.use(express.methodOverride())
   app.use(app.router)
-  app.use(express.static(path.join(__dirname, 'public')))
 })
 
 // simple standard errorhandler
-app.configure('development', function(){
+app.configure('development', function () {
   app.use(express.errorHandler())
 })
 
-//---------------------------------------
-// mini app
-//---------------------------------------
-var openConnections = []
-
 var context = rabbit.createContext()
 
-context.on('ready', function(){
+context.on('ready', function () {
   var pub = context.socket('PUB')
 
   pub.connect('/queue/stats')
 
-  setInterval(function() {
+  setInterval(function () {
 
     // publish to the stats topic
     pub.write(createMsg())
 
-  }, 1000);
+  }, 100);
 
-  app.get('/queue/stats', function(req, res){
-    var sub = context.socket('SUB')
-    sub.connect('/queue/stats')
+  var pool = require('generic-pool').Pool({
+    name: 'subscribers',
+    create: function (callback) {
+      var sub = context.socket('SUB')
+      sub.connect('/queue/stats')
+      callback(null, sub);
+    },
+    destroy: function (sub) {
+      log('destroy')
+      sub.destroy();
+    },
+    max: 50,
+    // optional. if you set this, make sure to drain() (see step 3)
+    min: 2,
+    // specifies how long a resource can stay idle in pool before being removed
+    idleTimeoutMillis: 30000,
+    // if true, logs via console.log - can also be a function
+    log: false
+  })
 
-    sub.on('data', function(data) {
-      res.write(data)
-      res.end()
-      sub.destroy()
+  app.get('/queue/stats', function (req, res) {
+    pool.acquire(function (err, sub) {
+
+      if (err) {
+        // handle error - this is generally the err from your
+        // factory.create function
+      }
+      else {
+
+        var listen = function(data, cb){
+          res.write(data)
+          res.end()
+          pool.release(sub)
+          cb()
+        }
+
+        function cleanup(){
+          log('remove')
+          sub.removeAllListeners('data')
+        }
+
+        sub.on('data', function(data){
+          listen(data, cleanup)
+        })
+      }
+    })
+
+    req.on("close", function () {
+      log('req', 'close')
     })
 
   })
 
-  http.createServer(app).listen(app.get('port'), function(){
+  http.createServer(app).listen(app.get('port'), function () {
     console.log("Express server listening on port " + app.get('port'));
   })
 
@@ -66,12 +100,6 @@ context.on('ready', function(){
 
 function createMsg() {
   return JSON.stringify({
-    date: (new Date()).toISOString()
-    , hostname: os.hostname()
-    , type: os.type()
-    , platform: os.platform()
-    , uptime: os.uptime()
-    , freemem: os.freemem()
-    , totalmem: os.totalmem()
+    date: (new Date()).toISOString(), hostname: os.hostname(), type: os.type(), platform: os.platform(), uptime: os.uptime(), freemem: os.freemem(), totalmem: os.totalmem()
   })
 }
