@@ -18,7 +18,13 @@
   "author": "Mark Wolfe <mark@wolfe.id.au> (http://www.wolfe.id.au)",
   "license": "MIT",
   "devDependencies": {
+    "chai": "~1.7.2",
+    "sinon": "~1.7.3",
+    "mocha": "~1.12.0"
   },
   "dependencies": {
+    "debug": "~0.7.2",
+    "rabbit.js": "~0.2.2",
+    "express": "~3.3.3"
   }
 }
