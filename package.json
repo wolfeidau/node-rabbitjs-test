@@ -26,6 +26,8 @@
     "debug": "~0.7.2",
     "rabbit.js": "~0.2.2",
     "express": "~3.3.3",
-    "generic-pool": "~2.0.3"
+    "generic-pool": "~2.0.3",
+    "amqp": "~0.1.7",
+    "async": "~0.2.9"
   }
 }

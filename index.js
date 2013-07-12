@@ -3,8 +3,9 @@ var express = require('express')
 var http = require('http')
 var os = require('os')
 var path = require('path')
-var rabbit = require('rabbit.js')
 var log = require('debug')('rabbitjs-test')
+
+var amqp = require('amqp')
 
 // create the app
 var app = express()
@@ -24,82 +25,111 @@ app.configure('development', function () {
   app.use(express.errorHandler())
 })
 
-var context = rabbit.createContext()
 
-context.on('ready', function () {
-  var pub = context.socket('PUB')
+var deviceList = [
+  '164731'
+  , '775721'
+  , '543789'
+  , '818878'
+  , '31816'
+  , '736615'
+  , '753544'
+  , '387684'
+  , '719218'
+  , '543866'
+  , '538031'
+  , '68356'
+  , '877515'
+  , '261493'
+  , '951305'
+  , '350485'
+  , '830250'
+]
 
-  pub.connect('/queue/stats')
 
-  setInterval(function () {
+var connection =
+  amqp.createConnection({url: "amqp://guest:guest@localhost:5672"})
 
-    // publish to the stats topic
-    pub.write(createMsg())
+// Wait for connection to become established.
+connection.on('ready', function () {
+  log('Connection', 'is open')
 
-  }, 100);
+  var ex = connection.exchange('/queue/device', {}, function (exchange) {
+    log('Exchange ' + exchange.name + ' is open')
 
-  var pool = require('generic-pool').Pool({
-    name: 'subscribers',
-    create: function (callback) {
-      var sub = context.socket('SUB')
-      sub.connect('/queue/stats')
-      callback(null, sub);
-    },
-    destroy: function (sub) {
-      log('destroy')
-      sub.destroy();
-    },
-    max: 50,
-    // optional. if you set this, make sure to drain() (see step 3)
-    min: 2,
-    // specifies how long a resource can stay idle in pool before being removed
-    idleTimeoutMillis: 30000,
-    // if true, logs via console.log - can also be a function
-    log: false
-  })
-
-  app.get('/queue/stats', function (req, res) {
-    pool.acquire(function (err, sub) {
-
-      if (err) {
-        // handle error - this is generally the err from your
-        // factory.create function
-      }
-      else {
-
-        var listen = function(data, cb){
-          res.write(data)
-          res.end()
-          pool.release(sub)
-          cb()
-        }
-
-        function cleanup(){
-          log('remove')
-          sub.removeAllListeners('data')
-        }
-
-        sub.on('data', function(data){
-          listen(data, cleanup)
-        })
+    app.post('/queue/device/:id', function (req, res) {
+      if (req.body.name) {
+        ex.publish(req.params.id, JSON.stringify({id: req.params.id, name: req.body.name}), {contentEncoding: 'utf8', contentType: 'application/json'})
+        res.send(200, 'thanks: ' + req.body.name)
+      } else {
+        res.send(400, 'Bad request, missing attributes.')
       }
     })
-
-    req.on("close", function () {
-      log('req', 'close')
-    })
-
   })
 
-  http.createServer(app).listen(app.get('port'), function () {
-    console.log("Express server listening on port " + app.get('port'));
+  var q = connection.queue('/queue/1', function (queue) {
+    log('Queue', queue.name, 'is open');
+    //q.bind(ex, '818878')
+    queue.bind(ex, '#')
+    // Receive messages
+    queue.subscribe(function (message) {
+      // Print messages to stdout
+      log('message');
+      try {
+        log('message - 1 - ', JSON.stringify(message));
+      } catch (e) {
+        log('error', e)
+      }
+    });
   })
+
+  var q2;
+
+  setInterval(function(){
+
+    if(q2){
+      q2.close()
+    }
+
+    var i = getRandomArbitrary(0, deviceList.length)
+
+    var deviceId = deviceList[i];
+
+    log('i', i)
+    log('deviceId', deviceId)
+
+    if (deviceId){
+
+      q2 = connection.queue('/queue/' + deviceId, function (queue) {
+        log('Queue', queue.name, 'is open');
+        queue.bind(ex, deviceId)
+        // Receive messages
+        queue.subscribe(function (message) {
+          // Print messages to stdout
+          log('message');
+          try {
+            log('message', deviceId, JSON.stringify(message));
+          } catch (e) {
+            log('error', e)
+          }
+        });
+      })
+
+    }
+
+  }, 10000)
+
+
+
 
 })
 
+http.createServer(app).listen(app.get('port'), function () {
+  console.log("Express server listening on port " + app.get('port'));
+})
 
-function createMsg() {
-  return JSON.stringify({
-    date: (new Date()).toISOString(), hostname: os.hostname(), type: os.type(), platform: os.platform(), uptime: os.uptime(), freemem: os.freemem(), totalmem: os.totalmem()
-  })
+// Returns a random number between min and max
+function getRandomArbitrary(min, max) {
+  return Math.floor(Math.random() * (max - min) + min);
 }
+
